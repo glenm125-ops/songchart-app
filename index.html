@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Chart Scroller">
+<meta name="theme-color" content="#111827">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="manifest" href="manifest.webmanifest">
+<title>Chart Scroller</title>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<style>
+  :root {
+    --bg: #111827;
+    --panel: #1f2937;
+    --panel2: #374151;
+    --accent: #3b82f6;
+    --accent2: #1d4ed8;
+    --text: #f9fafb;
+    --muted: #9ca3af;
+    --danger: #ef4444;
+    --ok: #22c55e;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    overscroll-behavior: none; }
+  #app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+
+  /* Top toolbar */
+  #toolbar { flex: 0 0 auto; background: var(--panel); padding: 8px 12px;
+    padding-top: max(8px, env(safe-area-inset-top));
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    border-bottom: 1px solid #000; }
+  .btn { background: var(--panel2); color: var(--text); border: none; border-radius: 10px;
+    padding: 10px 14px; font-size: 16px; font-weight: 600; cursor: pointer; min-height: 44px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+  .btn:active { transform: scale(0.96); }
+  .btn.primary { background: var(--accent); }
+  .btn.primary.playing { background: var(--ok); }
+  .btn.icon { padding: 10px 12px; }
+  .btn.big { font-size: 22px; padding: 12px 18px; }
+  .spacer { flex: 1 1 auto; }
+
+  .bpm-group { display: flex; align-items: center; gap: 4px; background: var(--panel2);
+    border-radius: 12px; padding: 4px; }
+  .bpm-group .btn { background: transparent; padding: 8px 12px; }
+  .bpm-val { font-size: 26px; font-weight: 800; min-width: 64px; text-align: center;
+    font-variant-numeric: tabular-nums; }
+
+  .ctl { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+  .ctl input[type=range] { width: 110px; accent-color: var(--accent); }
+  .ctl input[type=number] { width: 56px; background: var(--panel2); color: var(--text);
+    border: 1px solid #4b5563; border-radius: 8px; padding: 6px; font-size: 14px; }
+
+  /* Main split */
+  #main { flex: 1 1 auto; display: flex; min-height: 0; }
+
+  /* Library */
+  #library { width: 240px; flex: 0 0 auto; background: var(--panel); overflow-y: auto;
+    border-right: 1px solid #000; display: flex; flex-direction: column; }
+  #library header { padding: 10px 12px; font-size: 12px; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--muted); display: flex; justify-content: space-between;
+    align-items: center; }
+  #liblist { flex: 1 1 auto; overflow-y: auto; }
+  .lib-item { padding: 12px 14px; border-bottom: 1px solid #111827; display: flex;
+    justify-content: space-between; align-items: center; gap: 8px; cursor: pointer; }
+  .lib-item.active { background: var(--accent2); }
+  .lib-item .name { font-size: 14px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+  .lib-item .del { color: var(--muted); font-size: 18px; padding: 4px 8px; border-radius: 6px;
+    background: transparent; border: none; }
+  .lib-item .del:active { background: var(--danger); color: #fff; }
+  #dropzone { margin: 10px; padding: 18px 10px; border: 2px dashed #4b5563; border-radius: 12px;
+    text-align: center; font-size: 13px; color: var(--muted); cursor: pointer; }
+  #dropzone.drag { border-color: var(--accent); color: var(--text); background: rgba(59,130,246,.15); }
+
+  /* Viewer */
+  #viewer { flex: 1 1 auto; position: relative; overflow: hidden; background: #0b1220; }
+  #scroll { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden;
+    -webkit-overflow-scrolling: touch; scroll-behavior: auto; }
+  #pages { display: flex; flex-direction: column; align-items: center; padding: 8px 0 40vh; }
+  #pages canvas { display: block; margin: 0 0 10px; max-width: 100%;
+    box-shadow: 0 2px 12px rgba(0,0,0,.5); background: #fff; }
+  #empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 15px; text-align: center; padding: 20px; }
+
+  /* Progress line */
+  #progress { position: absolute; left: 0; right: 0; top: 0; height: 3px; background: var(--accent);
+    width: 0%; pointer-events: none; box-shadow: 0 0 8px var(--accent); }
+
+  /* Toast */
+  #toast { position: fixed; left: 50%; bottom: 70px; transform: translateX(-50%);
+    background: rgba(17,24,39,.95); color: var(--text); border: 1px solid var(--panel2);
+    padding: 10px 16px; border-radius: 10px; font-size: 14px; z-index: 50;
+    opacity: 0; pointer-events: none; transition: opacity .2s; max-width: 80vw; text-align: center; }
+  #toast.show { opacity: 1; }
+
+  .speed { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums;
+    min-width: 52px; }
+  .btn:disabled { opacity: .4; }
+
+  /* Bottom mini-bar */
+  #mini { flex: 0 0 auto; background: var(--panel); border-top: 1px solid #000;
+    padding: 8px 12px; padding-bottom: max(8px, env(safe-area-inset-bottom));
+    display: flex; align-items: center; gap: 10px; }
+  #mini .title { font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; flex: 1 1 auto; }
+
+  @media (max-width: 720px) {
+    #library { position: absolute; inset: 0; z-index: 20; width: 100%; display: none; }
+    #library.open { display: flex; }
+    .ctl input[type=range] { width: 80px; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Toolbar -->
+  <div id="toolbar">
+    <button class="btn icon" id="libbtn" title="Library">&#9776;</button>
+
+    <div class="bpm-group">
+      <button class="btn" id="bpm_minus">&minus;</button>
+      <div class="bpm-val" id="bpm_val">120</div>
+      <button class="btn" id="bpm_plus">+</button>
+    </div>
+
+    <button class="btn" id="tap" title="Tap tempo (tap repeatedly in time)">TAP</button>
+
+    <button class="btn primary big" id="play">&#9654; Start</button>
+    <button class="btn" id="stop" title="Stop & reset to top">&#9632;</button>
+
+    <div class="spacer"></div>
+
+    <div class="ctl">
+      <span>px/beat</span>
+      <input type="range" id="ppb" min="1" max="40" step="0.5" value="10">
+      <input type="number" id="ppb_num" min="0.5" max="80" step="0.5" value="10">
+      <span class="speed" id="speedread">20 px/s</span>
+    </div>
+
+    <button class="btn icon" id="fs" title="Fullscreen">&#9974;</button>
+  </div>
+
+  <!-- Main -->
+  <div id="main">
+    <aside id="library">
+      <header><span>Library</span></header>
+      <div id="dropzone">+ Add PDF charts<br><small>tap or drop files here</small></div>
+      <div id="liblist"></div>
+    </aside>
+
+    <div id="viewer">
+      <div id="progress"></div>
+      <div id="empty">No chart loaded.<br>Open the library and add a PDF.</div>
+      <div id="scroll"><div id="pages"></div></div>
+    </div>
+  </div>
+
+  <!-- Mini bar -->
+  <div id="mini">
+    <span class="title" id="nowplaying">—</span>
+    <button class="btn icon" id="bpm_minus2">&minus;</button>
+    <button class="btn icon" id="bpm_plus2">+</button>
+  </div>
+</div>
+<div id="toast"></div>
+
+<input type="file" id="filepicker" accept="application/pdf" multiple hidden>
+
+<script>
+const PDFJS = window['pdfjs-dist/build/pdf'] || window.pdfjsLib;
+PDFJS.GlobalWorkerOptions.workerSrc =
+  'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+
+/* ---------- State ---------- */
+const state = {
+  bpm: 120,
+  ppb: 10,           // pixels per beat
+  playing: false,
+  pdfDoc: null,
+  currentId: null,
+  pages: [],         // canvas elements
+  rafId: null,
+  lastTs: 0,
+  scrollPos: 0,     // float scroll accumulator (survives sub-pixel truncation)
+};
+const MIN_BPM = 20, MAX_BPM = 400;
+
+/* ---------- Toast ---------- */
+const toastEl = document.getElementById('toast');
+let toastTimer = null;
+function toast(msg, ms) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), ms == null ? 2600 : ms);
+}
+
+/* ---------- Speed readout ---------- */
+const speedRead = document.getElementById('speedread');
+function updateSpeedRead() {
+  speedRead.textContent = Math.round(speedPxPerSec()) + ' px/s';
+}
+
+/* ---------- IndexedDB ---------- */
+const DB_NAME = 'chartscroller', STORE = 'pdfs';
+function openDB() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE))
+        db.createObjectStore(STORE, { keyPath: 'id', autoIncrement: true });
+    };
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => rej(req.error);
+  });
+}
+async function dbAdd(name, blob) {
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    const r = tx.objectStore(STORE).add({ name, blob, added: Date.now() });
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+}
+async function dbAll() {
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(STORE, 'readonly');
+    const r = tx.objectStore(STORE).getAll();
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+}
+async function dbDelete(id) {
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    const r = tx.objectStore(STORE).delete(id);
+    r.onsuccess = () => res(); r.onerror = () => rej(r.error);
+  });
+}
+
+/* ---------- Library UI ---------- */
+const liblist = document.getElementById('liblist');
+const dropzone = document.getElementById('dropzone');
+const filepicker = document.getElementById('filepicker');
+
+async function refreshLibrary() {
+  const items = await dbAll();
+  liblist.innerHTML = '';
+  if (!items.length) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'padding:14px;color:var(--muted);font-size:13px;text-align:center;';
+    empty.textContent = 'No charts yet.';
+    liblist.appendChild(empty);
+    return;
+  }
+  items.sort((a,b) => a.added - b.added).forEach(it => {
+    const row = document.createElement('div');
+    row.className = 'lib-item' + (it.id === state.currentId ? ' active' : '');
+    const name = document.createElement('div');
+    name.className = 'name'; name.textContent = it.name;
+    const del = document.createElement('button');
+    del.className = 'del'; del.innerHTML = '&times;';
+    del.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm('Delete "' + it.name + '"?')) return;
+      await dbDelete(it.id);
+      if (state.currentId === it.id) { state.currentId = null; clearViewer(); }
+      refreshLibrary();
+    };
+    row.appendChild(name);
+    row.appendChild(del);
+    row.onclick = () => loadChart(it.id, it.name, it.blob);
+    liblist.appendChild(row);
+  });
+}
+
+function addFiles(files) {
+  const pdfs = [...files].filter(f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
+  let loaded = 0;
+  pdfs.forEach(async f => {
+    const id = await dbAdd(f.name.replace(/\.pdf$/i,''), f);
+    loaded++;
+    if (loaded === pdfs.length) {
+      await refreshLibrary();
+      // auto-load the most recently added
+      const all = (await dbAll()).sort((a,b)=>a.added-b.added);
+      const last = all[all.length-1];
+      if (last) loadChart(last.id, last.name, last.blob);
+    }
+  });
+  if (!pdfs.length) alert('Please choose PDF files.');
+}
+
+dropzone.onclick = () => filepicker.click();
+filepicker.onchange = () => { addFiles(filepicker.files); filepicker.value = ''; };
+
+['dragenter','dragover'].forEach(ev =>
+  dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.add('drag'); }));
+['dragleave','drop'].forEach(ev =>
+  dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.remove('drag'); }));
+dropzone.addEventListener('drop', e => addFiles(e.dataTransfer.files));
+
+/* ---------- PDF rendering ---------- */
+const pagesEl = document.getElementById('pages');
+const scrollEl = document.getElementById('scroll');
+const emptyEl = document.getElementById('empty');
+const progressEl = document.getElementById('progress');
+const nowplayingEl = document.getElementById('nowplaying');
+
+function clearViewer() {
+  pagesEl.innerHTML = '';
+  state.pages = [];
+  state.pdfDoc = null;
+  emptyEl.style.display = 'flex';
+  progressEl.style.width = '0%';
+  nowplayingEl.textContent = '—';
+  document.getElementById('play').disabled = true;
+}
+
+async function loadChart(id, name, blob) {
+  stop();
+  clearViewer();
+  state.currentId = id;
+  nowplayingEl.textContent = name;
+  emptyEl.style.display = 'none';
+  refreshLibrary();
+  try {
+    const buf = await blob.arrayBuffer();
+    const doc = await PDFJS.getDocument({ data: buf }).promise;
+    state.pdfDoc = doc;
+    const containerW = scrollEl.clientWidth;
+    for (let p = 1; p <= doc.numPages; p++) {
+      const page = await doc.getPage(p);
+      const viewport0 = page.getViewport({ scale: 1 });
+      // Fit page width to viewer, but cap scale so tiny charts aren't huge.
+      const scale = Math.max(0.6, Math.min(2.5, containerW / viewport0.width));
+      const viewport = page.getViewport({ scale });
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+      canvas.width = Math.floor(viewport.width * dpr);
+      canvas.height = Math.floor(viewport.height * dpr);
+      canvas.style.width = Math.floor(viewport.width) + 'px';
+      canvas.style.height = Math.floor(viewport.height) + 'px';
+      ctx.scale(dpr, dpr);
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      pagesEl.appendChild(canvas);
+      state.pages.push(canvas);
+    }
+    scrollEl.scrollTop = 0;
+    state.scrollPos = 0;
+    updateProgress();
+    document.getElementById('play').disabled = false;
+  } catch (err) {
+    emptyEl.style.display = 'flex';
+    emptyEl.innerHTML = 'Could not open PDF.<br><small>' + (err.message||err) + '</small>';
+    console.error(err);
+  }
+}
+
+/* ---------- Autoscroll ---------- */
+function speedPxPerSec() {
+  return (state.bpm / 60) * state.ppb;
+}
+function updateProgress() {
+  const max = scrollEl.scrollHeight - scrollEl.clientHeight;
+  const pct = max > 0 ? (scrollEl.scrollTop / max) * 100 : 0;
+  progressEl.style.width = pct + '%';
+}
+function tick(ts) {
+  if (!state.playing) return;
+  if (!state.lastTs) state.lastTs = ts;
+  const dt = (ts - state.lastTs) / 1000;
+  state.lastTs = ts;
+  const max = scrollEl.scrollHeight - scrollEl.clientHeight;
+  // Advance a float accumulator; the browser may truncate scrollTop to an
+  // integer on read-back, so we must not rely on it to preserve sub-pixel
+  // progress between frames (otherwise slow speeds never move at all).
+  state.scrollPos += speedPxPerSec() * dt;
+  scrollEl.scrollTop = state.scrollPos;
+  if (state.scrollPos >= max) {
+    state.scrollPos = max;
+    scrollEl.scrollTop = max;
+    stop(true);
+    return;
+  }
+  updateProgress();
+  state.rafId = requestAnimationFrame(tick);
+}
+function play() {
+  if (!state.pdfDoc) { toast('No chart loaded. Add one from the library.'); return; }
+  if (state.playing) return;
+  const max = scrollEl.scrollHeight - scrollEl.clientHeight;
+  if (max <= 1) {
+    toast('Chart fits on screen already — nothing to scroll. Try a taller chart or smaller zoom.');
+    return;
+  }
+  if (scrollEl.scrollTop >= max - 1) { scrollEl.scrollTop = 0; state.scrollPos = 0; } // restart if at end
+  else state.scrollPos = scrollEl.scrollTop; // honour manual scroll position
+  state.playing = true;
+  state.lastTs = 0;
+  setPlayBtn();
+  state.rafId = requestAnimationFrame(tick);
+}
+function stop(finished) {
+  state.playing = false;
+  if (state.rafId) cancelAnimationFrame(state.rafId);
+  state.rafId = null;
+  if (finished) {
+    // leave at bottom; show "done" by toggling button label briefly
+    setPlayBtn(true);
+  } else {
+    setPlayBtn();
+  }
+  updateProgress();
+}
+function setPlayBtn(done) {
+  const b = document.getElementById('play');
+  b.classList.toggle('playing', state.playing);
+  b.innerHTML = state.playing ? '&#10074;&#10074; Pause' : (done ? '&#10003; Done' : '&#9654; Start');
+}
+
+/* ---------- BPM controls ---------- */
+const bpmVal = document.getElementById('bpm_val');
+function setBpm(v) {
+  v = Math.round(v);
+  if (isNaN(v)) v = state.bpm;
+  state.bpm = Math.max(MIN_BPM, Math.min(MAX_BPM, v));
+  bpmVal.textContent = state.bpm;
+  if (typeof updateSpeedRead === 'function') updateSpeedRead();
+}
+function bumpBpm(d) { setBpm(state.bpm + d); }
+document.getElementById('bpm_minus').onclick = () => bumpBpm(-1);
+document.getElementById('bpm_plus').onclick  = () => bumpBpm(1);
+document.getElementById('bpm_minus2').onclick = () => bumpBpm(-1);
+document.getElementById('bpm_plus2').onclick  = () => bumpBpm(1);
+bpmVal.onclick = () => {
+  const v = prompt('Set BPM:', state.bpm);
+  if (v != null) setBpm(parseInt(v,10));
+};
+
+/* Tap tempo */
+const tapBtn = document.getElementById('tap');
+let tapTimes = [];
+let tapResetTimer = null;
+tapBtn.onclick = () => {
+  const now = performance.now();
+  tapTimes.push(now);
+  if (tapTimes.length > 6) tapTimes.shift();
+  // discard taps older than 2.5s
+  tapTimes = tapTimes.filter(t => now - t < 2500);
+  if (tapTimes.length >= 2) {
+    const intervals = [];
+    for (let i = 1; i < tapTimes.length; i++) intervals.push(tapTimes[i] - tapTimes[i-1]);
+    const avg = intervals.reduce((a,b)=>a+b,0) / intervals.length;
+    setBpm(60000 / avg);
+  }
+  tapBtn.style.background = 'var(--accent)';
+  setTimeout(() => tapBtn.style.background = '', 120);
+  clearTimeout(tapResetTimer);
+  tapResetTimer = setTimeout(() => tapTimes = [], 2600);
+};
+
+/* px/beat */
+const ppb = document.getElementById('ppb');
+const ppbNum = document.getElementById('ppb_num');
+function setPpb(v) {
+  v = parseFloat(v);
+  if (isNaN(v)) v = state.ppb;
+  state.ppb = Math.max(0.5, Math.min(80, v));
+  ppb.value = Math.min(40, state.ppb);
+  ppbNum.value = state.ppb;
+  updateSpeedRead();
+}
+ppb.oninput = () => setPpb(ppb.value);
+ppbNum.onchange = () => setPpb(ppbNum.value);
+
+/* Play / stop buttons */
+document.getElementById('play').onclick = play;
+document.getElementById('stop').onclick = () => { stop(); scrollEl.scrollTop = 0; state.scrollPos = 0; updateProgress(); };
+
+/* Fullscreen (iOS Safari) */
+document.getElementById('fs').onclick = () => {
+  const el = document.documentElement;
+  if (document.fullscreenElement) (document.exitFullscreen||document.webkitExitFullscreen).call(document);
+  else (el.requestFullscreen||el.webkitRequestFullscreen).call(el);
+};
+
+/* Library toggle on mobile */
+const libbtn = document.getElementById('libbtn');
+const libraryEl = document.getElementById('library');
+libbtn.onclick = () => libraryEl.classList.toggle('open');
+
+/* Allow manual scroll without fighting the autoscroll: tapping the viewer pauses. */
+scrollEl.addEventListener('touchstart', () => { if (state.playing) stop(); }, { passive: true });
+/* Keep the float accumulator in sync when the user scrolls manually while paused. */
+scrollEl.addEventListener('scroll', () => { if (!state.playing) state.scrollPos = scrollEl.scrollTop; }, { passive: true });
+
+/* Re-render current chart on resize/orientation change (debounced) */
+let resizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(async () => {
+    if (!state.currentId) return;
+    const wasPlaying = state.playing;
+    const top = scrollEl.scrollTop;
+    const items = (await dbAll()).filter(i => i.id === state.currentId);
+    if (items[0]) {
+      await loadChart(items[0].id, items[0].name, items[0].blob);
+      scrollEl.scrollTop = top;
+      if (wasPlaying) play();
+    }
+  }, 300);
+});
+
+/* Keyboard shortcuts (handy when testing on desktop) */
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.code === 'Space') { e.preventDefault(); state.playing ? stop() : play(); }
+  else if (e.key === 'ArrowUp') bumpBpm(1);
+  else if (e.key === 'ArrowDown') bumpBpm(-1);
+});
+
+/* ---------- Service worker ---------- */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW reg failed', err));
+  });
+}
+
+/* ---------- Init ---------- */
+setBpm(120); setPpb(10);
+document.getElementById('play').disabled = true;
+refreshLibrary();
+</script>
+</body>
+</html>
