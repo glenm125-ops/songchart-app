@@ -1,5 +1,5 @@
 // Service worker for Chart Scroller — caches the app shell + PDF.js for offline use.
-const VERSION = 'v2';
+const VERSION = 'v3';
 const CACHE = 'chartscroller-' + VERSION;
 const APP_SHELL = [
   './',
